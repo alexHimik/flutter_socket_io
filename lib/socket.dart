@@ -1,73 +1,164 @@
-enum Transports{
-  WEB_SOCKET,
-  POLLING
-}
+import 'package:flutter/services.dart';
+import 'dart:convert' show jsonDecode;
 
-class SocketOptions {
+typedef void SocketEventListener(dynamic data);
 
-  final String uri;
-  final Map<String, String> query;
+class SocketIO {
+  ///  Constants for default events handled by socket...
+  ///  Refer [https://socket.io/docs/client-api/#Event-%E2%80%98connect%E2%80%99](https://socket.io/docs/client-api/#Event-%E2%80%98connect%E2%80%99)
+  ///  Socket Connect event
+  static const String CONNECT = "connect";
 
-  ///Enable debug logging
-  final bool enableLogging;
+  ///  Socket Disconnect event
+  static const String DISCONNECT = "disconnect";
 
-  ///List of transport names.
-  List<Transports> transports;
+  ///  Socket Connection Error event
+  static const String CONNECT_ERROR = "connect_error";
 
-  ///Connection timeout (ms). Set -1 to disable.
-  int timeout = 20000;
-  
-  ///Namespace parameter 
-  String namesapce;
+  ///  Socket Connection timeout event
+  static const String CONNECT_TIMEOUT = "connect_timeout";
 
-//  public boolean forceNew;
-//          /**
-//         * Whether to enable multiplexing. Default is true.
-//         */
-//  public boolean multiplex = true;
-//  public boolean reconnection = true;
-//  public int reconnectionAttempts;
-//  public long reconnectionDelay;
-//  public long reconnectionDelayMax;
-//  public double randomizationFactor;
+  ///  Socket Error event
+  static const String ERROR = "error";
 
-//        /**
-//         * Whether to upgrade the transport. Defaults to `true`.
-//         */
-//        public boolean upgrade = true;
-//
-//        public boolean rememberUpgrade;
-//        public String host;
+  ///  Socket Connecting event
+  static const String CONNECTING = "connecting";
 
-//        public String hostname;
-//        public String path;
-//        public String timestampParam;
-//        public boolean secure;
-//        public boolean timestampRequests;
-//        public int port = -1;
-//        public int policyPort = -1;
+  ///  Socket Reconnect event
+  static const String RECONNECT = "reconnect";
 
-  SocketOptions(this.uri, {
-    this.query: const {},
-    this.enableLogging: false,
-    this.transports: const [Transports.WEB_SOCKET, Transports.POLLING],
-    this.namesapce = "/"
-  });
+  ///  Socket Reconnect Error event
+  static const String RECONNECT_ERROR = "reconnect_error";
 
-  Map asMap(){
-    return {
-      "uri": uri,
-      "query": query,
-      "enableLogging": enableLogging,
-      "namespace": namesapce,
-      "transports": transports.map((Transports t){
-        return {
-          Transports.WEB_SOCKET: "websocket",
-          Transports.POLLING: "polling"
-        }[t];
-      }).toList(),
-      "timeout": timeout
-    };
+  ///  Socket Reconnect Failed event
+  static const String RECONNECT_FAILED = "reconnect_failed";
+
+  ///  Socket Reconnecting event
+  static const String RECONNECTING = "reconnecting";
+
+  ///  Socket Ping event
+  static const String PING = "ping";
+
+  ///  Socket Pong event
+  static const String PONG = "pong";
+
+  ///Socket/Connection identifier
+  int id;
+
+  ///Store listeners
+  Map<String, List<Function>> _listeners = {};
+
+  ///Method channel to interact with android/iOS
+  final MethodChannel _channel;
+
+  ///Create a socket object with identifier received from platform API's
+  SocketIO(this.id)
+      : _channel =
+            new MethodChannel("adhara_socket_io:socket:${id.toString()}") {
+    _channel.setMethodCallHandler((call) {
+      if (call.method == 'incoming') {
+        final String eventName = call.arguments['eventName'];
+        final List<dynamic> arguments = call.arguments['args'];
+        _handleData(eventName, arguments);
+      }
+    });
   }
 
+  ///connect this socket to server
+  connect() async {
+    await _channel.invokeMethod("connect");
+  }
+
+  ///listen to an event
+  on(String eventName, SocketEventListener listener) async {
+    if (_listeners[eventName] == null) {
+      _listeners[eventName] = [];
+    }
+    _listeners[eventName].add(listener);
+    await _channel.invokeMethod("on", {"eventName": eventName});
+  }
+
+  ///stop listening to an event.
+  ///Send the same function reference to stop that particular listener
+  off(String eventName, [SocketEventListener listener]) async {
+    if (listener == null) {
+      _listeners[eventName] = [];
+    } else {
+      _listeners[eventName].remove(listener);
+    }
+    if (_listeners[eventName].length == 0) {
+      await _channel.invokeMethod("off", {"eventName": eventName});
+    }
+  }
+
+  ///send data to socket server
+  emit(String eventName, List<dynamic> arguments) async {
+    await _channel.invokeMethod('emit', {
+      'eventName': eventName,
+      'arguments': arguments,
+    });
+  }
+
+  ///Data listener called by platform API
+  _handleData(String eventName, List arguments) {
+    _listeners[eventName]?.forEach((Function listener) {
+      if (arguments.length == 0) {
+        arguments = [null];
+      } else {
+        arguments = arguments.map((_) {
+          try {
+            return jsonDecode(_);
+          } catch (e) {
+            return _;
+          }
+        }).toList();
+      }
+      Function.apply(listener, arguments);
+    });
+  }
+
+  //Utility methods for listeners. De-registering can be handled using off(eventName, fn)
+  ///Listen to connect event
+  onConnect(SocketEventListener listener) async => await on(CONNECT, listener);
+
+  ///Listen to disconnect event
+  onDisconnect(SocketEventListener listener) async =>
+      await on(DISCONNECT, listener);
+
+  ///Listen to connection error event
+  onConnectError(SocketEventListener listener) async =>
+      await on(CONNECT_ERROR, listener);
+
+  ///Listen to connection timeout event
+  onConnectTimeout(SocketEventListener listener) async =>
+      await on(CONNECT_TIMEOUT, listener);
+
+  ///Listen to error event
+  onError(SocketEventListener listener) async => await on(ERROR, listener);
+
+  ///Listen to connecting event
+  onConnecting(SocketEventListener listener) async =>
+      await on(CONNECTING, listener);
+
+  ///Listen to reconnect event
+  onReconnect(SocketEventListener listener) async =>
+      await on(RECONNECT, listener);
+
+  ///Listen to reconnect error event
+  onReconnectError(SocketEventListener listener) async =>
+      await on(RECONNECT_ERROR, listener);
+
+  ///Listen to reconnect failed event
+  onReconnectFailed(SocketEventListener listener) async =>
+      await on(RECONNECT_FAILED, listener);
+
+  ///Listen to reconnecting event
+  onReconnecting(SocketEventListener listener) async =>
+      await on(RECONNECTING, listener);
+
+  ///Listen to ping event
+  onPing(SocketEventListener listener) async => await on(PING, listener);
+
+  ///Listen to pong event
+  onPong(SocketEventListener listener) async => await on(PONG, listener);
 }
